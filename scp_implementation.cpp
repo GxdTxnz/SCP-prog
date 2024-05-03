@@ -11,9 +11,18 @@
 #include <pwd.h>
 #include <grp.h>
 
+/*
 void scp(const std::string& source, const std::string& destination)
 {
   std::string command = "scp -r " + source + " " + destination;
+  std::system(command.c_str());
+}
+*/ 
+
+void scp(const std::string& source, const std::string& destination)
+{
+  // Добавляем параметр для подавления запроса о подтверждении ключа хоста
+  std::string command = "scp -r " + source + " " + destination + " && echo '\n';";
   std::system(command.c_str());
 }
 
@@ -128,12 +137,51 @@ std::string selectDirectory(const std::string& path, const std::string& remote_a
         }
         else
         {
+          // Сохраняем стандартные дескрипторы вывода
+          int original_stdout = dup(fileno(stdout));
+          int original_stderr = dup(fileno(stderr));
+
+          // Создаем временный файл для сохранения вывода и ошибок scp
+          FILE *tempfile = tmpfile();
+
+          // Перенаправляем stdout и stderr на временный файл
+          dup2(fileno(tempfile), fileno(stdout));
+          dup2(fileno(tempfile), fileno(stderr));
+
+          // Выполняем команду scp
+          std::string source = path + "/" + files[highlight];
+          std::string destination = remote_address + ":" + path;
+          scp(source, destination);
+
+          // Восстанавливаем стандартные дескрипторы вывода
+          dup2(original_stdout, fileno(stdout));
+          dup2(original_stderr, fileno(stderr));
+
+          // Печатаем содержимое временного файла
+          rewind(tempfile);
+          char buffer[4096];
+          while (fgets(buffer, sizeof(buffer), tempfile) != NULL)
+          {
+            printw("%s", buffer);
+          }
+          fclose(tempfile);
+        }
+        break;
+/*
+      case KEY_RIGHT:
+        if (isDirectory(path + "/" + files[highlight]))
+        {
+          endwin();
+          return files[highlight];
+        }
+        else
+        {
           std::string source = path + "/" + files[highlight];
           std::string destination = remote_address + ":" + path;
           scp(source, destination);
         }
         break;
-
+*/
       default:
         break;
     }
