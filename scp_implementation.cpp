@@ -11,9 +11,10 @@
 #include <pwd.h>
 #include <grp.h>
 
+
 void scp(const std::string& source, const std::string& destination)
 {
-  std::string command = "scp -r " + source + " " + destination;
+  std::string command = "scp -q -r " + source + " " + destination + " > /dev/null 2>&1";
   std::system(command.c_str());
 }
 
@@ -158,14 +159,13 @@ int main(int argc, char* argv[])
     {
       size_t pos = current_directory.find_last_of("/\\");
 
-      if (pos != std::string::npos)
+      if (pos != std::string::npos && current_directory != "/")
       {
         current_directory = current_directory.substr(0, pos);
       }
-
-      if (current_directory.empty())
+      else 
       {
-        current_directory = ".";
+        current_directory = "/";  
       }
     }
 
