@@ -14,7 +14,7 @@
 
 void scp(const std::string& source, const std::string& destination)
 {
-  std::string command = "scp -q -r " + source + " " + destination + " > /dev/null 2>&1";
+  std::string command = "scp -q -r " + source + " " + destination + "> /dev/null 2>&1";
   std::system(command.c_str());
 }
 
@@ -47,14 +47,14 @@ std::string selectDirectory(const std::string& path, const std::string& remote_a
   }
   closedir(dir);
 
+  curs_set(0);
   initscr();
   keypad(stdscr, TRUE);
   start_color();
-  init_pair(1, COLOR_BLACK, COLOR_WHITE);  // Цвет для выделения
+  init_pair(1, COLOR_BLACK, COLOR_WHITE);
   int highlight = 0;
   int choice = 0;
 
-  // Отображение файлов
   while (1)
   {
     clear();
@@ -72,13 +72,11 @@ std::string selectDirectory(const std::string& path, const std::string& remote_a
         continue;
       }
 
-      // Получение владельца и группы файла
       struct passwd *pw = getpwuid(file_stat.st_uid);
       struct group  *gr = getgrgid(file_stat.st_gid);
       std::string owner = (pw != NULL) ? pw->pw_name : "unknown";
       std::string group = (gr != NULL) ? gr->gr_name : "unknown";
 
-      // Формирование строки с правами доступа
       char permissions[11];
       snprintf(permissions, 11, "%s%s%s%s%s%s%s%s%s%s",
               (S_ISDIR(file_stat.st_mode)) ? "d" : "-",
@@ -92,7 +90,6 @@ std::string selectDirectory(const std::string& path, const std::string& remote_a
               (file_stat.st_mode & S_IWOTH) ? "w" : "-",
               (file_stat.st_mode & S_IXOTH) ? "x" : "-");
 
-      // Вывод строк прав доступа, владельца, группы и имени файла
       mvprintw(i, 0, "%-10s %-8s %-8s %s", permissions, owner.c_str(), group.c_str(), files[i].c_str());
       attroff(COLOR_PAIR(1));
     }
@@ -130,9 +127,23 @@ std::string selectDirectory(const std::string& path, const std::string& remote_a
         else
         {
           std::string source = path + "/" + files[highlight];
-          std::string destination = remote_address + ":" + path;
+          std::string destination = remote_address + ":~/";
           scp(source, destination);
         }
+        break;
+
+      case 's':
+        if (isDirectory(path + "/" + files[highlight]))
+        {
+          std::string source = path + "/" + files[highlight];
+          std::string destination = remote_address + ":~/" + files[highlight];
+          scp(source, destination);
+        }
+        break;
+
+      case 'q':
+        endwin();
+        exit(0);
         break;
 
       default:
@@ -176,7 +187,7 @@ int main(int argc, char* argv[])
 
     else
     {
-      break;  // Выход, если нажата клавиша Escape
+      break;
     }
   }
 
