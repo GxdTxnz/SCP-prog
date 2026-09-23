@@ -1,0 +1,39 @@
+# make packages
+name: scpanel
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: 1
+section: net
+priority: optional
+maintainer: GxdTxnz <GxdTxnz@users.noreply.github.com>
+description: Terminal UI for scp, built for servers
+homepage: https://github.com/GxdTxnz/SCP-prog
+
+contents:
+  - dst: /usr/libexec/scpanel
+    type: dir
+    file_info:
+      mode: 0755
+  - src: dist/scpanel
+    dst: /usr/libexec/scpanel/scpanel
+    file_info:
+      mode: 0755
+  - src: /usr/libexec/scpanel/scpanel
+    dst: /usr/bin/scpanel
+    type: symlink
+
+overrides:
+  deb:
+    depends:
+      - openssh-client
+    recommends:
+      - rsync
+  rpm:
+    depends:
+      - openssh-clients
+
+deb:
+  compression: xz
+rpm:
+  compression: xz
