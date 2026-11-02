@@ -1,4 +1,10 @@
 BasedOnStyle: Microsoft
 IndentWidth: 2
-AllowShortBlocksOnASingleLine: Always
-AllowShortLoopsOnASingleLine: true
+BreakBeforeBraces: Allman
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: Inline
+InsertBraces: true
+SeparateDefinitionBlocks: Always

@@ -7,7 +7,8 @@
 # make clean - очистить файлы сборки
 
 TARGET := scpanel
-SRC := scpanel.cpp
+SRC := src/main.cpp
+HEADERS := $(wildcard src/*.hpp)
 CXX ?= g++
 CXXFLAGS ?= -O2
 CXXFLAGS += -std=c++17 -Wall -Wextra
@@ -20,14 +21,14 @@ DOCKER ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podma
 RUN_OPTS := --rm --security-opt label=disable $(shell $(DOCKER) --version 2>/dev/null | grep -qi podman && echo --userns=keep-id || echo "-u $$(id -u):$$(id -g)")
 BUILD_IMAGE ?= quay.io/pypa/manylinux2014_x86_64
 NFPM_IMAGE ?= docker.io/goreleaser/nfpm:v2.43.0
-VERSION ?= 1.0.0
+VERSION ?= 1.1.0
 INSTALL_BIN := $(if $(wildcard dist/$(TARGET)),dist/$(TARGET),$(TARGET))
 
 .PHONY: all debug portable packages install uninstall clean
 
 all: $(TARGET)
 
-$(TARGET): $(SRC)
+$(TARGET): $(SRC) $(HEADERS) Makefile
 	$(CXX) $(CXXFLAGS) $(NCURSES_CFLAGS) -o $@ $< $(NCURSES_LIBS)
 
 debug:
@@ -36,7 +37,7 @@ debug:
 
 portable: dist/$(TARGET)
 
-dist/$(TARGET): $(SRC) scripts/build-portable.sh
+dist/$(TARGET): $(SRC) $(HEADERS) scripts/build-portable.sh Makefile
 	mkdir -p dist
 	$(DOCKER) run $(RUN_OPTS) \
 		-v "$(CURDIR):/src:ro" -v "$(CURDIR)/dist:/out" \

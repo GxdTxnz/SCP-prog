@@ -51,7 +51,7 @@ for img in "${IMAGES[@]}"; do
   out=$(tail -n +2 "$log")
   rm -f "$log"
 
-  if printf '%s' "$out" | grep -q 'user@host'; then
+  if printf '%s' "$out" | grep -q 'Select protocol'; then
     printf '%-45s glibc %-5s OK\n' "$img" "$glibc"
   else
     printf '%-45s glibc %-5s ОШИБКА\n' "$img" "$glibc"

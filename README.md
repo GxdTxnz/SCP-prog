@@ -84,10 +84,36 @@ Compatibility tests (`scripts/test-*.sh`):
 ## Usage
 
 ```bash
-scpanel [user@host[:path]]
+scpanel [user@host[:path] [sftp|ssh]]
 ```
 
-Without arguments scpanel shows the hosts from `~/.ssh/config` (including files added with `Include`).
+If the program is run without arguments, `scpanel` will prompt you to select a protocol.
+Use the "Up" and "Down" keys to move the cursor and press Enter to confirm your selection.
+Pressing the Esc key cancels the selection.
+If you specify a host without a protocol, the program will also display the selection screen.
+
+To connect directly:
+```bash
+scpanel production sftp
+scpanel user@host:/var/log sftp
+scpanel user@host ssh
+```
+
+SFTP performs remote file operations using the SFTP subsystem without requiring a remote shell
+SSH mode maintains shell-based navigation and data transfer via scp/rsync
+Both modes use OpenSSH authentication and host aliases
+The current mode is displayed in the remote panel header
+
+SFTP displays numeric user and group IDs
+In the current implementation, regular files and directories are copied, and if the operation is canceled, they remain partially copied
+Symbolic links are not transferred
+Original access permissions and timestamps are not preserved during transfer
+
+When browsing via SFTP, a temporary local copy is downloaded. When editing and uploading, changes are applied, and the local
+copy is saved in case the upload fails; the remote save is not atomic.
+
+After selecting a protocol, `scpanel` displays the hosts from the `~/.ssh/config` file (including files added using `Include`).
+
 If you connect to an address that is not there, scpanel offers to save it to `~/.ssh/config`,
 so it appears in the list next time. Nothing is saved without your confirmation
 

@@ -1,4 +1,8 @@
 .vscode
 scpanel
 a.out
-dist/
+dist/*
+docs/*
+tests/*
+!dist/*deb
+!dist/*rpm

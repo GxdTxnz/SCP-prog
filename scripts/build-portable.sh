@@ -6,7 +6,7 @@ NC_VER=6.5
 NC_SHA256=136d91bc269a9a5785e5f9e980bc76ab57428f604ce3e5a5a90cebc767971cc6
 MAX_GLIBC=2.17
 
-SRC=/src/scpanel.cpp
+SRC=/src/src/main.cpp
 OUT=/out/scpanel
 WORK=$(mktemp -d)
 NC=$WORK/ncurses
