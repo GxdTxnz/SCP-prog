@@ -21,7 +21,8 @@ public:
   std::string fatal;      // вывод ошибки (после закрытия интерфейса)
   bool offerSave = false; // сервера нет в ~/.ssh/config - после подключения предлагаем сохранить
 
-  App(const Target &t, const std::string &localStart, Protocol mode) : tgt(t), localStart(localStart), protocol(mode), ssh(t)
+  App(const Target &t, const std::string &localStart, Protocol mode)
+      : tgt(t), localStart(localStart), protocol(mode), ssh(t)
   {
     panes[0].remote = false;
     panes[1].remote = true;
@@ -443,33 +444,21 @@ private:
     }
   }
 
-  void sftpCopyTree(const std::string &local, const std::string &remote, bool upload, unsigned depth = 0)
+  void sftpCopyTree(const std::string &local, const std::string &remote, bool upload, SftpTransfer &transfer,
+                    size_t &skipped, unsigned depth = 0)
   {
     if (depth > 128)
     {
       throw Sftp::Error(0, "Directory nesting exceeds limit");
     }
 
-    unsigned mode;
-
-    if (upload)
+    if (sftp.progress && !sftp.progress(0))
     {
-      struct stat st{};
-
-      if (lstat(local.c_str(), &st) != 0)
-      {
-        throw Sftp::Error(0, strerror(errno));
-      }
-
-      mode = st.st_mode;
+      throw Sftp::Error(0, "Cancelled");
     }
 
-    else
-    {
-      mode = sftp.stat(remote, false).mode;
-    }
-
-    // Avoid cycles and crossing symlinks outside the selected tree.
+    Sftp::Attr source = upload ? SftpTransfer::getLocalAttr(local) : sftp.stat(remote, false);
+    unsigned mode = source.mode;
 
     if (S_ISLNK(mode))
     {
@@ -478,6 +467,56 @@ private:
 
     if (S_ISDIR(mode))
     {
+      prog.title = "Copying directory (SFTP): " + (upload ? remote : local);
+      prog.done = 0;
+      prog.total = 0;
+      Sftp::Attr existing;
+      bool present = false;
+
+      if (upload)
+      {
+        try
+        {
+          existing = sftp.stat(remote, false);
+          present = true;
+        }
+
+        catch (const Sftp::Error &e)
+        {
+          if (e.code != 2)
+          {
+            throw;
+          }
+        }
+      }
+
+      else
+      {
+        struct stat st{};
+
+        if (lstat(local.c_str(), &st) == 0)
+        {
+          existing = SftpTransfer::getLocalAttr(local);
+          present = true;
+        }
+
+        else if (errno != ENOENT)
+        {
+          throw Sftp::Error(0, strerror(errno));
+        }
+      }
+
+      if (present && !S_ISDIR(existing.mode))
+      {
+        throw Sftp::Error(0, "Destination is not a directory");
+      }
+
+      if (present && transfer.confirmOverwrite && !transfer.confirmOverwrite(upload ? remote : local, existing))
+      {
+        ++skipped;
+        return;
+      }
+
       if (upload)
       {
         try
@@ -487,7 +526,7 @@ private:
 
         catch (const Sftp::Error &)
         {
-          if (!S_ISDIR(sftp.stat(remote, false).mode))
+          if (!present || !S_ISDIR(sftp.stat(remote, false).mode))
           {
             throw;
           }
@@ -503,7 +542,7 @@ private:
 
         for (const auto &e : files)
         {
-          sftpCopyTree(joinPath(local, e.name), joinPath(remote, e.name), true, depth + 1);
+          sftpCopyTree(joinPath(local, e.name), joinPath(remote, e.name), true, transfer, skipped, depth + 1);
         }
       }
 
@@ -512,46 +551,36 @@ private:
         struct stat st{};
 
         if (mkdir(local.c_str(), 0700) != 0 &&
-            (errno != EEXIST || lstat(local.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)))
+            (errno != EEXIST || !present || lstat(local.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)))
         {
           throw Sftp::Error(0, "Cannot create local directory: " + local);
         }
 
         for (const auto &e : sftp.list(remote))
         {
-          sftpCopyTree(joinPath(local, e.name), joinPath(remote, e.name), false, depth + 1);
+          sftpCopyTree(joinPath(local, e.name), joinPath(remote, e.name), false, transfer, skipped, depth + 1);
         }
+      }
+
+      // права и время ставим после того как скачали
+      if (upload)
+      {
+        transfer.applyRemoteAttrs(remote, source);
+      }
+
+      else
+      {
+        SftpTransfer::applyLocalAttrs(local, source);
       }
     }
 
     else if (S_ISREG(mode))
     {
-      if (upload)
+      auto result = upload ? transfer.upload(local, remote) : transfer.download(remote, local);
+
+      if (result == SftpTransfer::Result::Skipped)
       {
-        try
-        {
-          auto a = sftp.stat(remote, false);
-
-          if (!S_ISREG(a.mode))
-          {
-            throw Sftp::Error(0, "Destination is not a regular file");
-          }
-        }
-
-        catch (const Sftp::Error &e)
-        {
-          if (e.code != 2)
-          {
-            throw;
-          }
-        }
-
-        sftp.upload(local, remote);
-      }
-
-      else
-      {
-        sftp.download(remote, local);
+        ++skipped;
       }
     }
 
@@ -561,25 +590,141 @@ private:
     }
   }
 
+  void setupSftpTransfer(SftpTransfer &transfer, bool &cancelled,
+                         std::vector<std::pair<std::string, Entry>> approved = {})
+  {
+    transfer.confirmOverwrite = [this, &cancelled, approved = std::move(approved), all = false,
+                                 none = false](const std::string &path, const Sftp::Attr &current) mutable
+    {
+      for (const auto &item : approved)
+      {
+        const std::string &known = item.first;
+        const Entry &entry = item.second;
+
+        if (entry.is_dir && (path == known || path.compare(0, known.size() + 1, known + "/") == 0))
+        {
+          return true;
+        }
+
+        if (path == known && !entry.is_dir && S_ISREG(current.mode) &&
+            entry.size == static_cast<long long>(current.size) && entry.mtime == current.mtime &&
+            entry.mode == (current.mode & 0777))
+        {
+          return true;
+        }
+      }
+
+      if (all || none)
+      {
+        return all;
+      }
+
+      nodelay(stdscr, FALSE);
+      prog.on = false;
+      bool directory = S_ISDIR(current.mode);
+      int ch = ask(path + (directory ? " exists; merge and overwrite contents?" : " appeared or changed; overwrite?") +
+                       " y yes  n skip  a all  s skip all  Esc cancel",
+                   "ynas");
+      prog.on = true;
+      nodelay(stdscr, TRUE);
+
+      if (ch == 27)
+      {
+        cancelled = true;
+        throw Sftp::Error(0, "Cancelled");
+      }
+
+      all = ch == 'a';
+      none = ch == 's';
+      bool accepted = ch == 'y' || all;
+
+      if (directory && accepted)
+      {
+        Entry entry;
+        entry.is_dir = true;
+        approved.push_back({path, entry});
+      }
+
+      return accepted;
+    };
+
+    transfer.choose = [&](const std::string &path, bool canResume)
+    {
+      nodelay(stdscr, FALSE);
+      prog.on = false;
+      auto choice = pickResume(path, canResume);
+      cancelled = choice == SftpTransfer::Choice::Cancel;
+      prog.on = true;
+      nodelay(stdscr, TRUE);
+      return choice;
+    };
+
+    transfer.progress = [this, &cancelled, lastDraw = 0.0, start = nowSec(), base = uint64_t(0),
+                         previous = std::string(), wasVerifying = false](const SftpTransfer::Progress &p) mutable
+    {
+      int ch;
+
+      while ((ch = getch()) != ERR)
+      {
+        if (ch == 3 || g_cfg.cancelKeys.count(ch))
+        {
+          cancelled = true;
+        }
+      }
+
+      if (previous != p.path || wasVerifying != p.verifying || p.done < base)
+      {
+        previous = p.path;
+        wasVerifying = p.verifying;
+        start = nowSec();
+        base = p.done;
+      }
+
+      prog.title = std::string(p.verifying ? "Checking partial copy: " : "Transferring (SFTP): ") + p.path;
+      prog.done = p.done;
+      prog.total = p.total;
+      double elapsed = nowSec() - start;
+      prog.speed = elapsed > 0 ? (p.done - base) / elapsed : 0;
+      prog.eta = prog.speed > 0 && p.total >= p.done ? (p.total - p.done) / prog.speed : -1;
+
+      if (nowSec() - lastDraw >= 0.1)
+      {
+        draw();
+        lastDraw = nowSec();
+      }
+
+      return !cancelled;
+    };
+  }
+
   void transferSftp(const std::vector<std::string> &names)
   {
     Pane &src = panes[active], &dst = panes[1 - active];
     bool upload = !src.remote, cancelled = false;
+    size_t skipped = 0;
     std::string result;
 
     try
     {
       connectSftp();
+      SftpTransfer transfer(sftp, tgt.ssh_host);
+      std::vector<std::pair<std::string, Entry>> approved;
+
+      for (const auto &entry : dst.files)
+      {
+        if (std::find(names.begin(), names.end(), entry.name) != names.end())
+        {
+          approved.push_back({joinPath(dst.cwd, entry.name), entry});
+        }
+      }
+
+      setupSftpTransfer(transfer, cancelled, std::move(approved));
+      prog = Progress();
       prog.on = true;
-      prog.title = upload ? "Uploading (SFTP)" : "Downloading (SFTP)";
-      prog.done = 0;
-      prog.total = 0;
-      prog.speed = 0;
-      prog.eta = -1;
-      sftp.resetProgress();
+      prog.title = "Preparing SFTP transfer...";
       nodelay(stdscr, TRUE);
-      double start = nowSec(), lastDraw = 0;
-      sftp.progress = [&](uint64_t bytes)
+
+      sftp.progress = [this, &cancelled, lastDraw = 0.0](uint64_t) mutable
       {
         int ch;
 
@@ -589,14 +734,6 @@ private:
           {
             cancelled = true;
           }
-        }
-
-        prog.done = bytes;
-        double elapsed = nowSec() - start;
-
-        if (elapsed > 0)
-        {
-          prog.speed = bytes / elapsed;
         }
 
         if (nowSec() - lastDraw >= 0.1)
@@ -610,16 +747,22 @@ private:
 
       for (const auto &name : names)
       {
-        sftpCopyTree(joinPath(upload ? src.cwd : dst.cwd, name), joinPath(upload ? dst.cwd : src.cwd, name), upload);
+        sftpCopyTree(joinPath(upload ? src.cwd : dst.cwd, name), joinPath(upload ? dst.cwd : src.cwd, name), upload,
+                     transfer, skipped);
       }
 
-      src.marked.clear();
-      result = "Transferred via SFTP";
+      if (skipped == 0)
+      {
+        src.marked.clear();
+      }
+
+      result =
+          skipped ? "SFTP transfer finished; skipped " + std::to_string(skipped) + " file(s)" : "Transferred via SFTP";
     }
 
     catch (const std::exception &e)
     {
-      result = cancelled ? "Cancelled: partial files remain in destination"
+      result = cancelled ? "Cancelled: staged files kept for resume; completed files remain saved"
                          : std::string("SFTP transfer failed: ") + e.what();
     }
 
@@ -1394,12 +1537,14 @@ private:
     status = "Downloading " + e.name + "...";
     draw();
     int rc = -1;
+    Sftp::Attr editBaseline;
 
     if (usingSftp())
     {
       try
       {
         connectSftp();
+        editBaseline = sftp.stat(path, false);
         sftp.download(path, local);
         rc = 0;
       }
@@ -1444,11 +1589,24 @@ private:
 
     if (usingSftp())
     {
+      bool cancelled = false;
+
       try
       {
         connectSftp();
-        sftp.upload(local, path);
-        rc = 0;
+        SftpTransfer transfer(sftp, tgt.ssh_host);
+        setupSftpTransfer(transfer, cancelled);
+        prog = Progress();
+        prog.on = true;
+        prog.title = "Saving edited file (SFTP)...";
+        nodelay(stdscr, TRUE);
+        auto result = transfer.uploadEdited(local, path, editBaseline);
+        rc = result == SftpTransfer::Result::Completed ? 0 : -1;
+
+        if (rc != 0)
+        {
+          err = "Upload skipped";
+        }
       }
 
       catch (const std::exception &e)
@@ -1456,6 +1614,10 @@ private:
         err = e.what();
         rc = -1;
       }
+
+      sftp.progress = {};
+      nodelay(stdscr, FALSE);
+      prog.on = false;
     }
 
     else

@@ -2,6 +2,7 @@
 
 #include "hosts.hpp"
 #include "process.hpp"
+#include "sftp_transfer.hpp"
 
 // ввод строки поиска внизу экрана
 // Esc - отмена
@@ -213,6 +214,70 @@ static bool pickProtocol(Protocol &mode)
     {
       mode = selected == 0 ? Protocol::Sftp : Protocol::Ssh;
       return true;
+    }
+  }
+}
+
+// список файлов для файлов которые не были перекинуты полностью
+static SftpTransfer::Choice pickResume(const std::string &path, bool canResume)
+{
+  const char *labels[] = {"Resume", "Start over", "Skip"};
+  int first = canResume ? 0 : 1;
+  int selected = first;
+
+  for (;;)
+  {
+    erase();
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    if (rows >= 10 && cols >= 30)
+    {
+      mvaddstr(1, 2, "Incomplete transfer");
+      mvaddstr(2, 2, fitCols(path, cols - 3).c_str());
+
+      for (int i = first; i < 3; ++i)
+      {
+        std::string line = std::string(i == selected ? "▶ " : "  ") + labels[i];
+        mvaddstr(4 + i - first, 2, line.c_str());
+      }
+
+      if (!canResume)
+      {
+        mvaddstr(rows - 3, 0, fitCols("Partial copy does not match the source; resume unavailable", cols - 1).c_str());
+      }
+
+      mvaddstr(rows - 1, 0, fitCols("Up/Down select  Enter confirm  Esc cancel all", cols - 1).c_str());
+    }
+
+    else
+    {
+      mvaddstr(0, 0, "Window is too small");
+    }
+
+    refresh();
+    int ch = getch();
+
+    if (ch == 27 || ch == 3 || ch == 'q')
+    {
+      return SftpTransfer::Choice::Cancel;
+    }
+
+    if (ch == KEY_UP && selected > first)
+    {
+      --selected;
+    }
+
+    if (ch == KEY_DOWN && selected < 2)
+    {
+      ++selected;
+    }
+
+    if (rows >= 10 && cols >= 30 && (ch == '\n' || ch == '\r' || ch == KEY_ENTER))
+    {
+      return selected == 0   ? SftpTransfer::Choice::Resume
+             : selected == 1 ? SftpTransfer::Choice::Restart
+                             : SftpTransfer::Choice::Skip;
     }
   }
 }

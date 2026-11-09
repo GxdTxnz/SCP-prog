@@ -21,7 +21,7 @@ DOCKER ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podma
 RUN_OPTS := --rm --security-opt label=disable $(shell $(DOCKER) --version 2>/dev/null | grep -qi podman && echo --userns=keep-id || echo "-u $$(id -u):$$(id -g)")
 BUILD_IMAGE ?= quay.io/pypa/manylinux2014_x86_64
 NFPM_IMAGE ?= docker.io/goreleaser/nfpm:v2.43.0
-VERSION ?= 1.1.0
+VERSION ?= 1.1.2
 INSTALL_BIN := $(if $(wildcard dist/$(TARGET)),dist/$(TARGET),$(TARGET))
 
 .PHONY: all debug portable packages install uninstall clean

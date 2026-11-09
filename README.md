@@ -46,7 +46,7 @@ If you are changing (or have changed) the code and want to build packages for al
 use the following commands (see [Dependencies](#dependencies) for what you need):
 
 ```bash
-make packages VERSION=1.0.0    # -> dist/scpanel_1.0.0-1_amd64.deb, dist/scpanel-1.0.0-1.x86_64.rpm
+make packages VERSION=1.1.0    # -> dist/scpanel_1.1.0-1_amd64.deb, dist/scpanel-1.1.0-1.x86_64.rpm
 ```
 
 When building the binary or packages for all OSes, please run the compatibility tests
@@ -58,6 +58,13 @@ TIMEOUT=600 scripts/test-packages.sh     # installs dist/*.deb and dist/*.rpm on
 ```
 
 ## Dependencies
+
+To run scpanel, install the OpenSSH client (`ssh`; also `scp` for SSH mode).
+SFTP mode requires a server offering SFTP v3, but no remote shell or remote `rsync`.
+SSH mode requires a remote shell and Linux utilities, including `find` with `-printf` support.
+`rsync` is optional and must be installed on both machines to be used in SSH mode;
+otherwise transfers use `scp`.
+
 
 Building for your current system (`make`) needs a C++17 compiler (GCC 7+), make, pkg-config and ncurses with wide-character support:
 
@@ -93,6 +100,7 @@ Pressing the Esc key cancels the selection.
 If you specify a host without a protocol, the program will also display the selection screen.
 
 To connect directly:
+
 ```bash
 scpanel production sftp
 scpanel user@host:/var/log sftp
@@ -103,19 +111,43 @@ SFTP performs remote file operations using the SFTP subsystem without requiring 
 SSH mode maintains shell-based navigation and data transfer via scp/rsync
 Both modes use OpenSSH authentication and host aliases
 The current mode is displayed in the remote panel header
+The selected mode never automatically falls back to the other mode
 
-SFTP displays numeric user and group IDs
-In the current implementation, regular files and directories are copied, and if the operation is canceled, they remain partially copied
-Symbolic links are not transferred
-Original access permissions and timestamps are not preserved during transfer
+SFTP displays numeric user and group IDs and copies regular files and directories recursively.
+Transfers preserve source rwx permissions and modification times (with one-second precision).
+Directory metadata is applied after its contents, including when merging into an existing directory.
+Ownership, special permission bits, ACLs and extended attributes are not preserved.
+Encountering a symbolic link or a special file stops the copy with an error rather than skipping it.
 
-When browsing via SFTP, a temporary local copy is downloaded. When editing and uploading, changes are applied, and the local
-copy is saved in case the upload fails; the remote save is not atomic.
+SFTP writes to a temporary copy beside the destination and replaces the target only after
+successful transfer and metadata application. On interruption, the old target remains intact;
+already completed files stay saved. Retry from the same client machine and user to choose
+**Resume**, **Start over** or **Skip** with Up/Down and Enter; Esc cancels the transfer group.
+Resume first compares the partial copy with the source, which requires additional network reads.
+If the source or partial data no longer matches, only starting over or skipping is available.
 
-After selecting a protocol, `scpanel` displays the hosts from the `~/.ssh/config` file (including files added using `Include`).
+Replacing an existing remote file requires the server's `posix-rename@openssh.com` extension.
+If unavailable, scpanel reports an error and retains both the old target and the prepared copy.
+Atomic replacement is per file, not per directory, and requires write permission in the destination
+parent directory. Transfer copies are kept in hidden `.scpanel-transfer-*` directories;
+removing them discards the associated resume data.
+
+Viewing a file via SFTP downloads a temporary copy and opens it with the local pager.
+Directory browsing only reads the directory listing.
+In both modes, remote editing downloads a local copy, opens the local editor and uploads
+changed contents. SFTP saves use temporary-file replacement, retain the original rwx permissions
+and use the edited copy's modification time. If the remote size, modification time or permissions
+changed while editing, saving is refused. On failure, the local edits are kept and their path is shown.
+SSH-mode editing still writes directly to the remote file.
+
+When no host argument is supplied, protocol selection is followed by the hosts from
+`~/.ssh/config` (including files added using `Include`). Wildcard Host patterns are not
+listed. You can enter an address manually; if the list is empty, address entry opens directly.
+When a host argument is supplied, the host list is skipped.
 
 If you connect to an address that is not there, scpanel offers to save it to `~/.ssh/config`,
-so it appears in the list next time. Nothing is saved without your confirmation
+so it appears in the list next time. Nothing is saved without your confirmation.
+This saves the host alias, address and user; it does not remember the protocol or initial path.
 
 ## Controls
 
@@ -161,10 +193,13 @@ sort =
 [options]
 # initial sort: name, date or size
 sort = date
-# transfers of this size and larger go through rsync (if it is installed on both machines), smaller ones through scp;
+# SSH mode only: transfers of this size and larger go through rsync (if it is installed on both machines), smaller ones through scp;
 # size with K, M, G or T suffix (1024-based), 0 = always rsync, never = always scp; default 100M
 rsync_from = 100M
 ```
+
+The `rsync_from` option has no effect in SFTP mode. Key overrides apply to the file panels
+and transfer cancellation; the startup selectors use their fixed navigation keys.
 
 Key names: a single character (`s`, `/`), `F1`..`F12`, `Ctrl+A`..`Ctrl+Z`, `Up`, `Down`, `Left`, `Right`,
 `PgUp`, `PgDn`, `Home`, `End`, `Enter`, `Tab`, `Space`, `Esc`, `Backspace`, `Del`, `Ins`.

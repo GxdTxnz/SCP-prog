@@ -26,11 +26,18 @@ contents:
 overrides:
   deb:
     depends:
+      - libc6 (>= 2.17)
+      - ncurses-base
       - openssh-client
     recommends:
       - rsync
+    suggests:
+      - nano
+      - less
   rpm:
     depends:
+      - libc.so.6(GLIBC_2.17)(64bit)
+      - /usr/share/terminfo/x/xterm
       - openssh-clients
 
 deb:

@@ -30,7 +30,7 @@ public:
   {
     std::string name;
     uint64_t size = 0;
-    uint32_t mode = 0, uid = 0, gid = 0, mtime = 0;
+    uint32_t mode = 0, uid = 0, gid = 0, mtime = 0, atime = 0, flags = 0;
   };
 
   // вызываем если ждем ввод-вывод и передачу данных
@@ -90,6 +90,7 @@ public:
   {
     stop();
     done = 0;
+    atomicRenameAvailable = false;
 
     if (args.empty())
     {
@@ -151,6 +152,17 @@ public:
       if (p.byte() != 2 || p.number() != 3)
       {
         throw Error(0, "Server does not support SFTP v3");
+      }
+
+      while (p.pos < p.data.size())
+      {
+        auto name = p.string();
+        auto version = p.string();
+
+        if (name == "posix-rename@openssh.com" && version == "1")
+        {
+          atomicRenameAvailable = true;
+        }
       }
     }
 
@@ -244,9 +256,9 @@ public:
     return out;
   }
 
-  void mkdir(const std::string &path)
+  void mkdir(const std::string &path, uint32_t mode = 0700)
   {
-    request(14, str(path) + u32(0), 101);
+    request(14, str(path) + u32(4) + u32(mode), 101);
   }
 
   void rename(const std::string &from, const std::string &to)
@@ -297,6 +309,78 @@ public:
   void download(const std::string &remote, const std::string &local)
   {
     copy(local, remote, false);
+  }
+
+  bool supportsAtomicRename() const
+  {
+    return atomicRenameAvailable;
+  }
+
+  void atomicRename(const std::string &from, const std::string &to)
+  {
+    if (!atomicRenameAvailable)
+    {
+      throw Error(0, "Server does not support atomic replacement; prepared copy retained");
+    }
+
+    request(200, str("posix-rename@openssh.com") + str(from) + str(to), 101);
+  }
+
+  void remove(const std::string &path)
+  {
+    request(13, str(path), 101);
+  }
+
+  void rmdir(const std::string &path)
+  {
+    request(15, str(path), 101);
+  }
+
+  Attr statHandle(const std::string &handle)
+  {
+    auto p = request(8, str(handle), 105);
+    return attributes(p);
+  }
+
+  void setAttrs(const std::string &path, const Attr &a)
+  {
+    if ((a.flags & 12) != 12)
+    {
+      throw Error(0, "Server omitted permissions or timestamps");
+    }
+
+    request(9, str(path) + u32(12) + u32(a.mode & 0777) + u32(a.atime) + u32(a.mtime), 101);
+  }
+
+  std::string readHandle(const std::string &h, uint64_t offset, uint32_t length = 32768)
+  {
+    try
+    {
+      auto p = request(5, str(h) + u64(offset) + u32(length), 103);
+      auto data = p.string();
+
+      if (data.empty() || data.size() > length)
+      {
+        throw Error(0, "Invalid SFTP read size");
+      }
+
+      return data;
+    }
+
+    catch (const Error &e)
+    {
+      if (e.code == 1)
+      {
+        return {};
+      }
+
+      throw;
+    }
+  }
+
+  void writeHandle(const std::string &h, uint64_t offset, const std::string &data)
+  {
+    request(6, str(h) + u64(offset) + str(data), 101);
   }
 
 private:
@@ -351,6 +435,7 @@ private:
   pid_t pid = -1;
   uint32_t id = 0;
   uint64_t done = 0;
+  bool atomicRenameAvailable = false;
 
   static std::string u32(uint32_t n)
   {
@@ -378,6 +463,7 @@ private:
   {
     Attr a;
     auto flags = p.number();
+    a.flags = flags;
 
     if (flags & ~(1u | 2u | 4u | 8u | 0x80000000u))
     {
@@ -402,7 +488,7 @@ private:
 
     if (flags & 8)
     {
-      p.number();
+      a.atime = p.number();
       a.mtime = p.number();
     }
 
@@ -537,6 +623,7 @@ private:
     return p;
   }
 
+public:
   std::string openFile(const std::string &path, uint32_t flags)
   {
     auto p = request(3, str(path) + u32(flags) + u32(0), 102);
@@ -563,6 +650,7 @@ private:
     }
   }
 
+private:
   void copy(const std::string &local, const std::string &remote, bool upload)
   {
     // cначала открываем источник
